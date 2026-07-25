@@ -12,9 +12,9 @@ var env = builder.Environment;
 try
 {
     builder.UseCustomSerilog(env);
-    
+
     Log.Information("Configuring web host ({ApplicationContext})...", env.ApplicationName);
-    
+
     // Add services to the container.
     builder.Services.AddControllers();
 
@@ -27,7 +27,7 @@ try
 // Global exception handler
     builder.Services.AddExceptionHandler<GlobalExceptionHandler>();
     builder.Services.AddProblemDetails();
-    
+
     //Add Services
     builder.Services
         .AddCustomCors(configuration);
@@ -37,8 +37,8 @@ try
     builder.Services.AddAWSLambdaHosting(LambdaEventSource.RestApi);
 
     var app = builder.Build();
-    
-    
+
+
     app.UseCustomCors(configuration);
 
     app.UseExceptionHandler();
@@ -56,7 +56,7 @@ try
             ? Results.Redirect(longUrl, permanent: false)
             : Results.NotFound(new { error = $"Short code '{shortCode}' not found." });
     });
-    
+
     Log.Information("Starting web host ({ApplicationContext})...", env.ApplicationName);
     await app.RunAsync();
 
@@ -73,5 +73,3 @@ finally
 {
     Log.CloseAndFlush();
 }
-
-
