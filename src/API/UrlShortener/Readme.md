@@ -46,6 +46,6 @@ If already installed check if new version is available.
 
 Deploy application
 ```
-    cd "url-shortener/src/url-shortener"
+    cd "UrlShortener/src/UrlShortener"
     dotnet lambda deploy-serverless
 ```

@@ -1,6 +1,6 @@
 using Microsoft.AspNetCore.Mvc;
 
-namespace url_shortener.Controllers;
+namespace UrlShortener.Controllers;
 
 [ApiController]
 [Route("[controller]")]

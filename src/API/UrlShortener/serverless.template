@@ -8,7 +8,7 @@
     "AspNetCoreFunction": {
       "Type": "AWS::Serverless::Function",
       "Properties": {
-        "Handler": "url-shortener",
+        "Handler": "UrlShortener",
         "Runtime": "dotnet8",
         "CodeUri": "",
         "MemorySize": 512,
