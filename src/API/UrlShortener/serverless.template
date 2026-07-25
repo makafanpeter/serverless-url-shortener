@@ -46,7 +46,7 @@
       "Type": "AWS::Serverless::Function",
       "Properties": {
         "Handler": "UrlShortener",
-        "CodeUri": "",
+        "CodeUri": "src/API/UrlShortener/",
         "Policies": [
           {
             "Statement": [
