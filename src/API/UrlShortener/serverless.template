@@ -79,7 +79,39 @@
           }
         }
       }
-    }
+    },
+        "FrontendBucket": {
+          "Type": "AWS::S3::Bucket",
+          "Properties": {
+            "BucketName": { "Fn::Sub": "${TablePrefix}url-shortener-frontend-${AWS::AccountId}" },
+            "WebsiteConfiguration": {
+              "IndexDocument": "index.html",
+              "ErrorDocument": "index.html"
+            },
+            "PublicAccessBlockConfiguration": {
+              "BlockPublicAcls": false,
+              "BlockPublicPolicy": false,
+              "IgnorePublicAcls": false,
+              "RestrictPublicBuckets": false
+            }
+          }
+        },
+        "FrontendBucketPolicy": {
+          "Type": "AWS::S3::BucketPolicy",
+          "Properties": {
+            "Bucket": { "Ref": "FrontendBucket" },
+            "PolicyDocument": {
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Principal": "*",
+                  "Action": "s3:GetObject",
+                  "Resource": { "Fn::Sub": "${FrontendBucket.Arn}/*" }
+                }
+              ]
+            }
+          }
+        }
   },
   "Outputs": {
     "ApiURL": {
@@ -91,6 +123,15 @@
     "DynamoDBTableName": {
       "Description": "Name of the DynamoDB table storing short URL records",
       "Value": { "Ref": "UrlShortenerTable" }
-    }
+    },
+    "FrontendBucketName": {
+            "Description": "Name of the S3 bucket hosting the frontend",
+            "Value": { "Ref": "FrontendBucket" }
+          },
+          "FrontendWebsiteURL": {
+            "Description": "S3 static website endpoint URL for the frontend",
+            "Value": { "Fn::GetAtt": [ "FrontendBucket", "WebsiteURL" ] }
+          }
   }
+  
 }

@@ -364,4 +364,6 @@ FodyWeavers.xsd
 
 .idea/
 appsettings.Development.json
-Adinova.Backend.API.http
+.aws-sam/
+.junie
+samconfig.toml
