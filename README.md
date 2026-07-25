@@ -55,35 +55,49 @@ sam --version      # SAM CLI 1.x+
 serverless-url-shortener/
 ├── src/
 │   ├── Frontend/
-│   │   └── index.html                  # Static web UI (deployed to S3)
+│   │   └── index.html                      # Static web UI (deployed to S3)
 │   └── API/
 │       └── UrlShortener/
 │           ├── Controllers/
-│           │   ├── UrlShortenerController.cs   # CRUD endpoints
-│           │   └── StatsController.cs          # Analytics endpoint
+│           │   ├── UrlShortenerController.cs   # Create / read / delete endpoints
+│           │   └── StatsController.cs          # GET /stats/{code} analytics
 │           ├── Exceptions/
-│           │   ├── AppException.cs             # Base exception (status + error code)
+│           │   ├── AppException.cs             # Base exception (HTTP status + error code)
 │           │   ├── NotFoundException.cs        # 404
 │           │   ├── ConflictException.cs        # 409
 │           │   └── ValidationException.cs      # 400
 │           ├── Infrastructure/
-│           │   └── GlobalExceptionHandler.cs   # Centralised error → JSON mapping
+│           │   ├── Configurations/
+│           │   │   ├── Cors.cs                 # CORS policy configuration
+│           │   │   └── LoggingOptions.cs       # Logging settings model
+│           │   ├── Logging/
+│           │   │   └── LoggingExtensions.cs    # Serilog / structured logging setup
+│           │   ├── Web/
+│           │   │   └── GlobalExceptionHandler.cs  # IExceptionHandler → ErrorResponse
+│           │   └── DependencyInjection.cs      # Infrastructure service registrations
 │           ├── Models/
-│           │   ├── CreateShortUrlRequest.cs
-│           │   ├── ShortUrlResponse.cs
-│           │   ├── UrlStatsResponse.cs
-│           │   └── ErrorResponse.cs
+│           │   ├── CreateShortUrlRequest.cs    # POST body (longUrl + optional alias)
+│           │   ├── ShortUrlResponse.cs         # Standard short URL response
+│           │   ├── UrlStatsResponse.cs         # Analytics response
+│           │   └── ErrorResponse.cs            # { code, message, traceId }
 │           ├── Persistence/
-│           │   ├── Entities/UrlRecord.cs       # DynamoDB entity
-│           │   └── Infrastructure/
-│           │       ├── IDynamoDbContext.cs
-│           │       └── DynamoDbContext.cs      # High-level + low-level DynamoDB client
+│           │   ├── Entities/
+│           │   │   └── UrlRecord.cs            # DynamoDB entity (ShortCode hash key)
+│           │   ├── Infrastructure/
+│           │   │   ├── IDynamoDbContext.cs     # Persistence interface
+│           │   │   ├── DynamoDbContext.cs      # High-level + low-level DynamoDB client
+│           │   │   └── DynamoDbOptions.cs      # Region / table name / prefix options
+│           │   └── DependencyInjection.cs      # Persistence service registrations
 │           ├── Services/
 │           │   ├── IUrlShortenerService.cs
 │           │   └── UrlShortenerService.cs      # Base62 code gen, atomic PutItem
+│           ├── Properties/
+│           │   └── launchSettings.json         # Local run / debug profiles
 │           ├── Program.cs
 │           ├── appsettings.json
-│           ├── aws-lambda-tools-defaults.json  # Lambda CLI defaults
+│           ├── appsettings.Development.json
+│           ├── aws-lambda-tools-defaults.json  # dotnet lambda CLI defaults
+│           ├── samconfig.toml                  # SAM deploy configuration (generated)
 │           └── serverless.template             # SAM / CloudFormation template
 └── README.md
 ```
@@ -94,13 +108,37 @@ serverless-url-shortener/
 
 All configuration lives in `appsettings.json` and can be overridden with **environment variables** (using double-underscore `__` as the section separator).
 
+### DynamoDB
+
 | Key | Environment Variable | Default | Description |
 |-----|---------------------|---------|-------------|
 | `AmazonOptions:RegionEndpoint` | `AmazonOptions__RegionEndpoint` | `eu-west-1` | AWS region for DynamoDB |
-| `AmazonOptions:TablePrefix` | `AmazonOptions__TablePrefix` | *(empty)* | Optional prefix for the DynamoDB table name (e.g. `dev-`, `prod-`) |
+| `AmazonOptions:TablePrefix` | `AmazonOptions__TablePrefix` | *(empty)* | Optional prefix applied to the DynamoDB table name (e.g. `dev-`, `prod-`) |
+
+### CORS
+
+| Key | Environment Variable | Default | Description |
+|-----|---------------------|---------|-------------|
+| `CORS:AllowAnyOrigin` | `CORS__AllowAnyOrigin` | `false` | Set to `true` to allow all origins (dev only) |
+| `CORS:AllowedOrigins:0` | `CORS__AllowedOrigins__0` | *(none)* | First allowed origin. Add further origins as `__1`, `__2`, etc. |
+
+The SAM template injects the S3 frontend bucket URL as the first allowed origin automatically:
+
+```json
+"CORS__AllowAnyOrigin":   "false",
+"CORS__AllowedOrigins__0": { "Fn::Sub": "http://${FrontendBucket}.s3-website-${AWS::Region}.amazonaws.com" }
+```
 
 > [!NOTE]
-> The SAM template injects `AmazonOptions__RegionEndpoint` and `AmazonOptions__TablePrefix` automatically as Lambda environment variables, so you do not need to set them manually after deployment.
+> The SAM template injects all environment variables above automatically. You only need to set them manually when running locally or outside of SAM.
+
+> [!TIP]
+> To allow multiple frontend origins (e.g. a CloudFront distribution alongside the raw S3 URL), add them as sequential array entries in the SAM template environment variables:
+> ```json
+> "CORS__AllowedOrigins__0": "https://dxxxxx.cloudfront.net",
+> "CORS__AllowedOrigins__1": { "Fn::Sub": "http://${FrontendBucket}.s3-website-${AWS::Region}.amazonaws.com" }
+> ```
+
 
 ---
 
@@ -194,101 +232,92 @@ aws cloudformation describe-stacks \
 
 ## Frontend Deployment
 
-The frontend is a single HTML file located at `src/Frontend/index.html`.  
-It is hosted as a **static website on Amazon S3** — no server required.
+The frontend is a single HTML file at `src/Frontend/index.html`, hosted as a
+**static S3 website**. The SAM template provisions everything automatically:
 
-### 1 — Update the API URL in `index.html`
+| SAM Resource | What it does |
+|---|---|
+| `FrontendBucket` | Creates the S3 bucket, enables static website hosting (`index.html` / `index.html`), and disables public-access blocks |
+| `FrontendBucketPolicy` | Attaches a public `s3:GetObject` policy so browsers can fetch `index.html` |
+| Lambda env vars | Injects `CORS__AllowAnyOrigin=false` and `CORS__AllowedOrigins__0` set to the bucket's website URL — no manual CORS config needed |
 
-Open `src/Frontend/index.html` and replace the `API_BASE` constant near the bottom of the `<script>` block with your actual API Gateway URL (printed at the end of `sam deploy`, or retrieved with `sam list stack-outputs`):
+The bucket name is derived from the `TablePrefix` parameter and your AWS account ID:
+
+```
+{TablePrefix}url-shortener-frontend-{AccountId}
+```
+
+### 1 — Deploy the backend first
+
+Run `sam build` and `sam deploy` as described in the [Deployment](#deployment) section above.  
+At the end of deployment, SAM prints the stack outputs — note the two frontend values:
+
+```bash
+sam list stack-outputs --stack-name url-shortener --output table
+```
+
+| Output key | Example value |
+|---|---|
+| `FrontendBucketName` | `url-shortener-frontend-123456789012` |
+| `FrontendWebsiteURL` | `http://url-shortener-frontend-123456789012.s3-website-eu-west-1.amazonaws.com` |
+| `ApiURL` | `https://abc123xyz.execute-api.eu-west-1.amazonaws.com/Prod/` |
+
+### 2 — Update `API_BASE` in `index.html`
+
+Open `src/Frontend/index.html` and replace the `API_BASE` constant with the `ApiURL` output value (**without** the trailing `/`):
 
 ```js
 // Before
 const API_BASE = "https://<invoke-url>.execute-api.<region>.amazonaws.com/Prod";
 
-// After (example)
+// After — paste your ApiURL output here
 const API_BASE = "https://abc123xyz.execute-api.eu-west-1.amazonaws.com/Prod";
 ```
 
-### 2 — Create the S3 bucket
+### 3 — Upload `index.html` to S3
+
+Use the `FrontendBucketName` output from step 1:
 
 ```bash
-aws s3 mb s3://my-url-shortener-frontend --region eu-west-1
+aws s3 cp src/Frontend/index.html \
+  s3://<FrontendBucketName>/index.html \
+  --content-type "text/html" \
+  --cache-control "no-cache"
+```
+
+Example with the actual bucket name:
+
+```bash
+aws s3 cp src/Frontend/index.html \
+  s3://url-shortener-frontend-123456789012/index.html \
+  --content-type "text/html" \
+  --cache-control "no-cache"
+```
+
+### 4 — Open the site
+
+Navigate to the `FrontendWebsiteURL` output in your browser:
+
+```
+http://url-shortener-frontend-123456789012.s3-website-eu-west-1.amazonaws.com
 ```
 
 > [!NOTE]
-> Bucket names must be globally unique. Choose a name that reflects your project/environment (e.g. `my-app-url-shortener-ui`).
-
-### 3 — Enable static website hosting
-
-```bash
-aws s3 website s3://my-url-shortener-frontend \
-  --index-document index.html \
-  --error-document index.html
-```
-
-### 4 — Set a public-read bucket policy
-
-Create a file named `bucket-policy.json`:
-
-```json
-{
-  "Version": "2012-10-17",
-  "Statement": [
-    {
-      "Sid": "PublicReadGetObject",
-      "Effect": "Allow",
-      "Principal": "*",
-      "Action": "s3:GetObject",
-      "Resource": "arn:aws:s3:::my-url-shortener-frontend/*"
-    }
-  ]
-}
-```
-
-Apply it:
-
-```bash
-aws s3api put-bucket-policy \
-  --bucket my-url-shortener-frontend \
-  --policy file://bucket-policy.json
-```
-
-### 5 — Enable CORS on the API Gateway
-
-If the browser blocks requests to your API, add a CORS header to your API Gateway stage or configure it in the SAM template. For a quick test you can enable CORS via the AWS Console:  
-**API Gateway → your API → Resources → Actions → Enable CORS**.
-
-### 6 — Upload the file
-
-```bash
-aws s3 cp src/Frontend/index.html s3://my-url-shortener-frontend/index.html \
-  --content-type "text/html" \
-  --cache-control "no-cache"
-```
-
-### 7 — Access the site
-
-Your site is live at:
-
-```
-http://my-url-shortener-frontend.s3-website-eu-west-1.amazonaws.com
-```
-
-The URL pattern is:
-```
-http://{bucket-name}.s3-website-{region}.amazonaws.com
-```
-
-> [!TIP]
-> To use a custom domain (e.g. `short.example.com`), put **Amazon CloudFront** in front of the S3 bucket and add a CNAME record in Route 53 or your DNS provider pointing to the CloudFront distribution domain.
+> The S3 website endpoint is **HTTP only**. To serve over HTTPS, put a **CloudFront** distribution in front of the bucket and update `CORS__AllowedOrigins__0` in the SAM template to the CloudFront URL before redeploying.
 
 ### Re-deploying after changes
 
+After editing `index.html`, re-upload with the same command:
+
 ```bash
-aws s3 cp src/Frontend/index.html s3://my-url-shortener-frontend/index.html \
+aws s3 cp src/Frontend/index.html \
+  s3://<FrontendBucketName>/index.html \
   --content-type "text/html" \
   --cache-control "no-cache"
 ```
+
+> [!TIP]
+> To use a custom domain (e.g. `short.example.com`), put **Amazon CloudFront** in front of the bucket, add a CNAME in Route 53 pointing to the CloudFront domain, and add the CloudFront URL as `CORS__AllowedOrigins__1` in the SAM template environment variables before redeploying.
 
 ---
 
