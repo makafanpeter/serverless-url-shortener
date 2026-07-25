@@ -2,7 +2,7 @@ using Microsoft.AspNetCore.Diagnostics;
 using UrlShortener.Exceptions;
 using UrlShortener.Models;
 
-namespace UrlShortener.Infrastructure
+namespace UrlShortener.Infrastructure.Web
 {
     /// <summary>
     /// Global exception handler registered with ASP.NET Core's built-in

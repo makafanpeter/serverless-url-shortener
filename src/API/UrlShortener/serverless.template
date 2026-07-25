@@ -17,7 +17,9 @@
       "Environment": {
         "Variables": {
           "AmazonOptions__RegionEndpoint": { "Ref": "AWS::Region" },
-          "AmazonOptions__TablePrefix": { "Ref": "TablePrefix" }
+          "AmazonOptions__TablePrefix": { "Ref": "TablePrefix" },
+           "CORS__AllowAnyOrigin": "false",
+           "CORS__AllowedOrigins__0": { "Fn::Sub": "http://${FrontendBucket}.s3-website-${AWS::Region}.amazonaws.com" }
         }
       }
     }
