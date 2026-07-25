@@ -53,36 +53,39 @@ sam --version      # SAM CLI 1.x+
 
 ```
 serverless-url-shortener/
-└── src/
-    └── API/
-        └── UrlShortener/
-            ├── Controllers/
-            │   ├── UrlShortenerController.cs   # CRUD endpoints
-            │   └── StatsController.cs          # Analytics endpoint
-            ├── Exceptions/
-            │   ├── AppException.cs             # Base exception (status + error code)
-            │   ├── NotFoundException.cs        # 404
-            │   ├── ConflictException.cs        # 409
-            │   └── ValidationException.cs      # 400
-            ├── Infrastructure/
-            │   └── GlobalExceptionHandler.cs   # Centralised error → JSON mapping
-            ├── Models/
-            │   ├── CreateShortUrlRequest.cs
-            │   ├── ShortUrlResponse.cs
-            │   ├── UrlStatsResponse.cs
-            │   └── ErrorResponse.cs
-            ├── Persistence/
-            │   ├── Entities/UrlRecord.cs       # DynamoDB entity
-            │   └── Infrastructure/
-            │       ├── IDynamoDbContext.cs
-            │       └── DynamoDbContext.cs      # High-level + low-level DynamoDB client
-            ├── Services/
-            │   ├── IUrlShortenerService.cs
-            │   └── UrlShortenerService.cs      # Base62 code gen, atomic PutItem
-            ├── Program.cs
-            ├── appsettings.json
-            ├── aws-lambda-tools-defaults.json  # Lambda CLI defaults
-            └── serverless.template             # SAM / CloudFormation template
+├── src/
+│   ├── Frontend/
+│   │   └── index.html                  # Static web UI (deployed to S3)
+│   └── API/
+│       └── UrlShortener/
+│           ├── Controllers/
+│           │   ├── UrlShortenerController.cs   # CRUD endpoints
+│           │   └── StatsController.cs          # Analytics endpoint
+│           ├── Exceptions/
+│           │   ├── AppException.cs             # Base exception (status + error code)
+│           │   ├── NotFoundException.cs        # 404
+│           │   ├── ConflictException.cs        # 409
+│           │   └── ValidationException.cs      # 400
+│           ├── Infrastructure/
+│           │   └── GlobalExceptionHandler.cs   # Centralised error → JSON mapping
+│           ├── Models/
+│           │   ├── CreateShortUrlRequest.cs
+│           │   ├── ShortUrlResponse.cs
+│           │   ├── UrlStatsResponse.cs
+│           │   └── ErrorResponse.cs
+│           ├── Persistence/
+│           │   ├── Entities/UrlRecord.cs       # DynamoDB entity
+│           │   └── Infrastructure/
+│           │       ├── IDynamoDbContext.cs
+│           │       └── DynamoDbContext.cs      # High-level + low-level DynamoDB client
+│           ├── Services/
+│           │   ├── IUrlShortenerService.cs
+│           │   └── UrlShortenerService.cs      # Base62 code gen, atomic PutItem
+│           ├── Program.cs
+│           ├── appsettings.json
+│           ├── aws-lambda-tools-defaults.json  # Lambda CLI defaults
+│           └── serverless.template             # SAM / CloudFormation template
+└── README.md
 ```
 
 ---
@@ -189,7 +192,108 @@ aws cloudformation describe-stacks \
 
 ---
 
+## Frontend Deployment
+
+The frontend is a single HTML file located at `src/Frontend/index.html`.  
+It is hosted as a **static website on Amazon S3** — no server required.
+
+### 1 — Update the API URL in `index.html`
+
+Open `src/Frontend/index.html` and replace the `API_BASE` constant near the bottom of the `<script>` block with your actual API Gateway URL (printed at the end of `sam deploy`, or retrieved with `sam list stack-outputs`):
+
+```js
+// Before
+const API_BASE = "https://<invoke-url>.execute-api.<region>.amazonaws.com/Prod";
+
+// After (example)
+const API_BASE = "https://abc123xyz.execute-api.eu-west-1.amazonaws.com/Prod";
+```
+
+### 2 — Create the S3 bucket
+
+```bash
+aws s3 mb s3://my-url-shortener-frontend --region eu-west-1
+```
+
+> [!NOTE]
+> Bucket names must be globally unique. Choose a name that reflects your project/environment (e.g. `my-app-url-shortener-ui`).
+
+### 3 — Enable static website hosting
+
+```bash
+aws s3 website s3://my-url-shortener-frontend \
+  --index-document index.html \
+  --error-document index.html
+```
+
+### 4 — Set a public-read bucket policy
+
+Create a file named `bucket-policy.json`:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "PublicReadGetObject",
+      "Effect": "Allow",
+      "Principal": "*",
+      "Action": "s3:GetObject",
+      "Resource": "arn:aws:s3:::my-url-shortener-frontend/*"
+    }
+  ]
+}
+```
+
+Apply it:
+
+```bash
+aws s3api put-bucket-policy \
+  --bucket my-url-shortener-frontend \
+  --policy file://bucket-policy.json
+```
+
+### 5 — Enable CORS on the API Gateway
+
+If the browser blocks requests to your API, add a CORS header to your API Gateway stage or configure it in the SAM template. For a quick test you can enable CORS via the AWS Console:  
+**API Gateway → your API → Resources → Actions → Enable CORS**.
+
+### 6 — Upload the file
+
+```bash
+aws s3 cp src/Frontend/index.html s3://my-url-shortener-frontend/index.html \
+  --content-type "text/html" \
+  --cache-control "no-cache"
+```
+
+### 7 — Access the site
+
+Your site is live at:
+
+```
+http://my-url-shortener-frontend.s3-website-eu-west-1.amazonaws.com
+```
+
+The URL pattern is:
+```
+http://{bucket-name}.s3-website-{region}.amazonaws.com
+```
+
+> [!TIP]
+> To use a custom domain (e.g. `short.example.com`), put **Amazon CloudFront** in front of the S3 bucket and add a CNAME record in Route 53 or your DNS provider pointing to the CloudFront distribution domain.
+
+### Re-deploying after changes
+
+```bash
+aws s3 cp src/Frontend/index.html s3://my-url-shortener-frontend/index.html \
+  --content-type "text/html" \
+  --cache-control "no-cache"
+```
+
+---
+
 ## API Reference
+
 
 Base URL: `https://{api-id}.execute-api.{region}.amazonaws.com/Prod`
 

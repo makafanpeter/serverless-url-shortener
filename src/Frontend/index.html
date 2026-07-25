@@ -1,24 +1,217 @@
-<!doctype html><meta charset="utf-8">
-<h1>URL Shortener</h1>
-<form id="f">
-    <input id="url" placeholder="https://example.com" required style="width:60%">
-    <button>Shorten</button>
-</form>
-<p id="out"></p>
-<script>
-    const API = "https://<invoke-id>.execute-api.<region>.amazonaws.com/prod";
-    document.getElementById('f').addEventListener('submit', async (e)=>{
-        e.preventDefault();
-        const url = document.getElementById('url').value.trim();
-        const r = await fetch(`${API}/shorten`, {
-            method:'POST',
-            headers:{'Content-Type':'application/json'/*,'x-api-key':'<key>' if enabled */},
-            body: JSON.stringify({url})
-        });
-        const j = await r.json();
-        document.getElementById('out').innerHTML = r.ok
-            ? `<a href="${j.shortUrl}" target="_blank">${j.shortUrl}</a>`
-            : `Error: ${j.error||'Unknown'}`;
-    });
-</script>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>URL Shortener</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
+    body {
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      background: linear-gradient(135deg, #0f0c29, #302b63, #24243e);
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      color: #e2e8f0;
+      padding: 2rem;
+    }
+
+    .card {
+      background: rgba(255, 255, 255, 0.07);
+      backdrop-filter: blur(14px);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 1.25rem;
+      padding: 2.5rem 2rem;
+      width: 100%;
+      max-width: 540px;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+    }
+
+    h1 {
+      font-size: 1.75rem;
+      font-weight: 700;
+      letter-spacing: -0.5px;
+      margin-bottom: 0.4rem;
+      background: linear-gradient(90deg, #a78bfa, #60a5fa);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .subtitle {
+      font-size: 0.9rem;
+      color: #94a3b8;
+      margin-bottom: 2rem;
+    }
+
+    .input-row {
+      display: flex;
+      gap: 0.6rem;
+    }
+
+    input[type="url"] {
+      flex: 1;
+      padding: 0.75rem 1rem;
+      border-radius: 0.6rem;
+      border: 1px solid rgba(255,255,255,0.15);
+      background: rgba(255,255,255,0.06);
+      color: #e2e8f0;
+      font-size: 0.95rem;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+
+    input[type="url"]:focus { border-color: #a78bfa; }
+    input[type="url"]::placeholder { color: #64748b; }
+
+    .alias-row {
+      margin-top: 0.6rem;
+    }
+
+    input[type="text"] {
+      width: 100%;
+      padding: 0.65rem 1rem;
+      border-radius: 0.6rem;
+      border: 1px solid rgba(255,255,255,0.1);
+      background: rgba(255,255,255,0.04);
+      color: #e2e8f0;
+      font-size: 0.88rem;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+
+    input[type="text"]:focus { border-color: #60a5fa; }
+    input[type="text"]::placeholder { color: #475569; }
+
+    button {
+      padding: 0.75rem 1.4rem;
+      border-radius: 0.6rem;
+      border: none;
+      background: linear-gradient(135deg, #7c3aed, #3b82f6);
+      color: #fff;
+      font-size: 0.95rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: opacity 0.2s, transform 0.1s;
+      white-space: nowrap;
+    }
+
+    button:hover { opacity: 0.9; }
+    button:active { transform: scale(0.97); }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    .result {
+      margin-top: 1.4rem;
+      padding: 1rem;
+      border-radius: 0.75rem;
+      font-size: 0.92rem;
+      display: none;
+    }
+
+    .result.success {
+      display: block;
+      background: rgba(52, 211, 153, 0.1);
+      border: 1px solid rgba(52, 211, 153, 0.3);
+      color: #6ee7b7;
+    }
+
+    .result.error {
+      display: block;
+      background: rgba(248, 113, 113, 0.1);
+      border: 1px solid rgba(248, 113, 113, 0.3);
+      color: #fca5a5;
+    }
+
+    .result a { color: #93c5fd; text-decoration: underline; word-break: break-all; }
+
+    .copy-btn {
+      margin-top: 0.5rem;
+      padding: 0.35rem 0.9rem;
+      font-size: 0.8rem;
+      background: rgba(255,255,255,0.1);
+      border: 1px solid rgba(255,255,255,0.15);
+      border-radius: 0.4rem;
+      color: #cbd5e1;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+
+    .copy-btn:hover { background: rgba(255,255,255,0.18); }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>URL Shortener</h1>
+    <p class="subtitle">Paste a long URL and get a short, shareable link instantly.</p>
+
+    <form id="shorten-form">
+      <div class="input-row">
+        <input id="long-url" type="url" placeholder="https://example.com/very/long/path" required />
+        <button id="submit-btn" type="submit">Shorten</button>
+      </div>
+      <div class="alias-row">
+        <input id="custom-alias" type="text" placeholder="Custom alias (optional)" maxlength="50" />
+      </div>
+    </form>
+
+    <div id="result" class="result"></div>
+  </div>
+
+  <script>
+    // ── Replace this with your actual API Gateway URL (from `sam list stack-outputs`) ──
+    const API_BASE = "https://<invoke-url>.execute-api.<region>.amazonaws.com/Prod";
+
+    const form      = document.getElementById('shorten-form');
+    const input     = document.getElementById('long-url');
+    const aliasInput= document.getElementById('custom-alias');
+    const btn       = document.getElementById('submit-btn');
+    const result    = document.getElementById('result');
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      btn.disabled = true;
+      btn.textContent = 'Shortening…';
+      result.className = 'result';
+      result.innerHTML = '';
+
+      const body = { longUrl: input.value.trim() };
+      const alias = aliasInput.value.trim();
+      if (alias) body.customAlias = alias;
+
+      try {
+        const res = await fetch(`${API_BASE}/api/url-shortener`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body)
+        });
+
+        const data = await res.json();
+
+        if (res.ok) {
+          result.className = 'result success';
+          result.innerHTML = `
+            <div>Short URL created:</div>
+            <a href="${data.shortUrl}" target="_blank" rel="noopener">${data.shortUrl}</a>
+            <br/>
+            <button class="copy-btn" onclick="navigator.clipboard.writeText('${data.shortUrl}')
+              .then(() => this.textContent = 'Copied!')
+              .catch(() => this.textContent = 'Copy failed')">
+              Copy
+            </button>`;
+        } else {
+          result.className = 'result error';
+          result.innerHTML = `${data.message || data.code || 'An error occurred.'}`;
+        }
+      } catch (err) {
+        result.className = 'result error';
+        result.innerHTML = `Could not reach the API. Check the <code>API_BASE</code> URL in the page source.`;
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Shorten';
+      }
+    });
+  </script>
+</body>
+</html>
