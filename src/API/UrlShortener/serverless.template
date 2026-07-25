@@ -1,21 +1,66 @@
 {
   "AWSTemplateFormatVersion": "2010-09-09",
   "Transform": "AWS::Serverless-2016-10-31",
-  "Description": "An AWS Serverless Application that uses the ASP.NET Core framework running in Amazon Lambda.",
-  "Parameters": {},
-  "Conditions": {},
+  "Description": "Serverless URL Shortener — ASP.NET Core on AWS Lambda backed by DynamoDB.",
+  "Parameters": {
+    "TablePrefix": {
+      "Type": "String",
+      "Default": "",
+      "Description": "Optional prefix applied to the DynamoDB table name (e.g. 'dev-', 'prod-')."
+    }
+  },
+  "Globals": {
+    "Function": {
+      "Runtime": "dotnet8",
+      "MemorySize": 512,
+      "Timeout": 30,
+      "Environment": {
+        "Variables": {
+          "AmazonOptions__RegionEndpoint": { "Ref": "AWS::Region" },
+          "AmazonOptions__TablePrefix": { "Ref": "TablePrefix" }
+        }
+      }
+    }
+  },
   "Resources": {
+    "UrlShortenerTable": {
+      "Type": "AWS::DynamoDB::Table",
+      "Properties": {
+        "TableName": { "Fn::Sub": "${TablePrefix}UrlShortener" },
+        "BillingMode": "PAY_PER_REQUEST",
+        "AttributeDefinitions": [
+          {
+            "AttributeName": "ShortCode",
+            "AttributeType": "S"
+          }
+        ],
+        "KeySchema": [
+          {
+            "AttributeName": "ShortCode",
+            "KeyType": "HASH"
+          }
+        ]
+      }
+    },
     "AspNetCoreFunction": {
       "Type": "AWS::Serverless::Function",
       "Properties": {
         "Handler": "UrlShortener",
-        "Runtime": "dotnet8",
         "CodeUri": "",
-        "MemorySize": 512,
-        "Timeout": 30,
-        "Role": null,
         "Policies": [
-          "AWSLambda_FullAccess"
+          {
+            "Statement": [
+              {
+                "Effect": "Allow",
+                "Action": [
+                  "dynamodb:GetItem",
+                  "dynamodb:PutItem",
+                  "dynamodb:DeleteItem"
+                ],
+                "Resource": { "Fn::GetAtt": [ "UrlShortenerTable", "Arn" ] }
+              }
+            ]
+          }
         ],
         "Events": {
           "ProxyResource": {
@@ -38,10 +83,14 @@
   },
   "Outputs": {
     "ApiURL": {
-      "Description": "API endpoint URL for Prod environment",
+      "Description": "API Gateway endpoint URL (Prod stage)",
       "Value": {
         "Fn::Sub": "https://${ServerlessRestApi}.execute-api.${AWS::Region}.amazonaws.com/Prod/"
       }
+    },
+    "DynamoDBTableName": {
+      "Description": "Name of the DynamoDB table storing short URL records",
+      "Value": { "Ref": "UrlShortenerTable" }
     }
   }
 }
