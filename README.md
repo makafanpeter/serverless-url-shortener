@@ -36,15 +36,15 @@ Amazon DynamoDB  ◄────────────────────
 |------|---------|---------|
 | .NET SDK | 8.0+ | https://dotnet.microsoft.com/download |
 | AWS CLI | v2 | https://aws.amazon.com/cli/ |
-| Amazon.Lambda.Tools | latest | `dotnet tool install -g Amazon.Lambda.Tools` |
-| AWS SAM CLI *(optional)* | latest | https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/install-sam-cli.html |
+| AWS SAM CLI | latest | https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/install-sam-cli.html |
+| Docker *(optional, for `sam local`)* | latest | https://www.docker.com/products/docker-desktop |
 
 Verify your toolchain:
 
 ```bash
-dotnet --version          # 8.0+
-aws --version             # aws-cli/2.x
-dotnet lambda --version   # Amazon Lambda Tools
+dotnet --version   # 8.0+
+aws --version      # aws-cli/2.x
+sam --version      # SAM CLI 1.x+
 ```
 
 ---
@@ -107,63 +107,78 @@ All configuration lives in `appsettings.json` and can be overridden with **envir
 
 ```bash
 aws configure
-# Enter your Access Key ID, Secret Access Key, region (e.g. eu-west-1), and output format (json)
+# Enter your Access Key ID, Secret Access Key, default region (e.g. eu-west-1), and output format (json)
 ```
 
-Or use a named profile:
+Or use a named profile and export it for the session:
 
 ```bash
 aws configure --profile my-profile
+export AWS_PROFILE=my-profile
 ```
 
-### 2 — Create an S3 bucket for deployment artefacts
+### 2 — Build
 
-Lambda deployment packages are staged in S3 before CloudFormation picks them up.
-
-```bash
-aws s3 mb s3://my-url-shortener-deployments --region eu-west-1
-```
-
-### 3 — Deploy
-
-Run from the project directory:
+Run from the **project** directory (where `serverless.template` lives):
 
 ```bash
 cd src/API/UrlShortener
-
-dotnet lambda deploy-serverless \
-  --stack-name url-shortener \
-  --s3-bucket my-url-shortener-deployments \
-  --region eu-west-1
+sam build --template serverless.template
 ```
 
-The command will:
-1. Build and publish the .NET project in Release mode
-2. Package and upload the artefact to S3
-3. Run `aws cloudformation deploy` to create/update the stack
-4. Print the API Gateway URL on success
+SAM compiles the .NET project in Release mode and stages the output under `.aws-sam/build/`.
 
-#### Deploying to multiple environments
+### 3 — Deploy (first time)
 
-Use the `TablePrefix` parameter to isolate DynamoDB tables per environment:
+```bash
+sam deploy --guided --template-file serverless.template
+```
+
+The interactive wizard will ask for:
+
+| Prompt | Suggested value |
+|--------|-----------------|
+| Stack name | `url-shortener` |
+| AWS Region | `eu-west-1` |
+| Parameter `TablePrefix` | *(leave blank for default, or enter e.g. `dev-`)* |
+| Confirm changeset | `Y` |
+| Allow SAM to create IAM roles | `Y` |
+| Save config to `samconfig.toml` | `Y` |
+
+The answers are saved to `samconfig.toml` — subsequent deploys only need:
+
+```bash
+sam build --template serverless.template && sam deploy
+```
+
+### 4 — Deploying to multiple environments
+
+Use the `TablePrefix` parameter to give each environment its own DynamoDB table.
+You can maintain separate `samconfig.toml` configs using SAM config environments:
 
 ```bash
 # Staging
-dotnet lambda deploy-serverless \
+sam deploy \
+  --config-env staging \
   --stack-name url-shortener-staging \
-  --s3-bucket my-url-shortener-deployments \
-  --template-parameters TablePrefix=staging-
+  --parameter-overrides TablePrefix=staging-
 
 # Production
-dotnet lambda deploy-serverless \
+sam deploy \
+  --config-env prod \
   --stack-name url-shortener-prod \
-  --s3-bucket my-url-shortener-deployments \
-  --template-parameters TablePrefix=prod-
+  --parameter-overrides TablePrefix=prod-
 ```
 
-### 4 — Get the API URL
+### 5 — Get the API URL
 
-After deployment the CloudFormation stack outputs the endpoint:
+The URL is printed at the end of every `sam deploy`. You can also retrieve it at any time:
+
+```bash
+sam list stack-outputs --stack-name url-shortener --output table
+```
+
+Or directly via the AWS CLI:
 
 ```bash
 aws cloudformation describe-stacks \
@@ -288,32 +303,60 @@ All errors share a consistent envelope:
 
 ## Local Development
 
-Run the API locally using the standard .NET dev server (Kestrel):
+### Option A — Kestrel (fastest)
 
 ```bash
 cd src/API/UrlShortener
 dotnet run
 ```
 
-> [!IMPORTANT]
-> Running locally requires **real AWS credentials** with DynamoDB access, as there is no embedded DynamoDB emulator configured. You can use [DynamoDB Local](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/DynamoDBLocal.html) or [LocalStack](https://www.localstack.cloud/) and update the endpoint in `appsettings.Development.json`.
+The API is available at `http://localhost:5000`.
 
-To test with the **AWS Lambda Mock Test Tool** (simulates API Gateway → Lambda locally):
+> [!IMPORTANT]
+> This requires **real AWS credentials** with DynamoDB access. To avoid hitting a live table, use [DynamoDB Local](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/DynamoDBLocal.html) or [LocalStack](https://www.localstack.cloud/) and override the endpoint in `appsettings.Development.json`.
+
+### Option B — SAM Local (simulates API Gateway + Lambda)
+
+Requires Docker.
 
 ```bash
 cd src/API/UrlShortener
-dotnet run --launch-profile "Mock Lambda Test Tool"
+
+# Build first
+sam build --template serverless.template
+
+# Start a local API Gateway emulator on http://localhost:3000
+sam local start-api --template serverless.template
+```
+
+Test a redirect:
+```bash
+curl -v http://localhost:3000/my-alias
+```
+
+### Viewing logs
+
+Tail live Lambda logs after deployment:
+
+```bash
+sam logs --stack-name url-shortener --tail
+```
+
+Filter to a specific function:
+
+```bash
+sam logs --stack-name url-shortener --name AspNetCoreFunction --tail
 ```
 
 ---
 
 ## Teardown
 
-To remove all AWS resources created by the stack:
-
 ```bash
-aws cloudformation delete-stack --stack-name url-shortener --region eu-west-1
+sam delete --stack-name url-shortener
 ```
 
+SAM will prompt for confirmation before deleting the stack and its S3 artefacts.
+
 > [!CAUTION]
-> This permanently deletes the DynamoDB table and all short URL records. Back up the data first if needed.
+> This permanently deletes the DynamoDB table and **all short URL records**. Back up any data you need before running this command.
